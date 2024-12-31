@@ -4,24 +4,20 @@ use log::{self, info, error};
 use walkdir::WalkDir;
 use std::path::PathBuf;
 use std::env;
+use dotenv::dotenv;
 
 #[derive(Parser, Debug)]
 #[command(
     about,
     version,
     after_help = "
-    You can specify the chain id by alias or by id, supported aliases are:
-    eth: Ethereum
-    base: Base
-
-    Note: You need to set the correct API_KEY environment variable.
-    You can get an API key from:
-    https://etherscan.io/apis
-    https://basescan.org/
+    You can specify the chain by name, supported chains are:
+    eth: Ethereum (requires ETHERSCAN_API_KEY in .env)
+    base: Base (requires BASESCAN_API_KEY in .env)
     "
 )]
 struct Args {
-    /// Chain id or alias, for more info see the help
+    /// Chain name, for more info see the help
     chain: String,
     /// Address of the contract to clone
     address: String,
@@ -29,18 +25,32 @@ struct Args {
     path: String,
 }
 
-fn chain_to_id(key: &str) -> Option<i32> {
-    match key.to_lowercase().as_str() {
-        "eth" => Some(1),
-        "base" => Some(8453),
+struct ChainConfig {
+    api_key_env: &'static str,
+    api_url: &'static str,
+    chain_id: i32,
+}
+
+fn get_chain_config(chain: &str) -> Option<ChainConfig> {
+    match chain.to_lowercase().as_str() {
+        "eth" => Some(ChainConfig {
+            api_key_env: "ETHERSCAN_API_KEY",
+            api_url: "https://api.etherscan.io/api",
+            chain_id: 1,
+        }),
+        "base" => Some(ChainConfig {
+            api_key_env: "BASESCAN_API_KEY",
+            api_url: "https://api.basescan.org/api",
+            chain_id: 8453,
+        }),
         _ => None,
     }
 }
 
-fn build_url(chainid: i32, address: &str, api_key: &str) -> String {
+fn build_url(config: &ChainConfig, address: &str, api_key: &str) -> String {
     format!(
-        "https://api.basescan.org/api?chainid={}&module=contract&action=getsourcecode&address={}&apikey={}",
-        chainid, address, api_key
+        "{}?module=contract&action=getsourcecode&address={}&apikey={}",
+        config.api_url, address, api_key
     )
 }
 
@@ -51,13 +61,12 @@ async fn fetch_contract_source(url: &str) -> Result<serde_json::Value, Box<dyn s
     
     let json: serde_json::Value = serde_json::from_str(&body)?;
     
-    // Check if the API request was successful
     if let Some(status) = json["status"].as_str() {
         if status != "1" {
             let message = json["message"].as_str().unwrap_or("Unknown error");
             let result = json["result"].as_str().unwrap_or("No additional info");
             error!("API Error: {} - {}", message, result);
-            return Err(format!("Etherscan API error: {} - {}", message, result).into());
+            return Err(format!("API error: {} - {}", message, result).into());
         }
     }
 
@@ -66,6 +75,9 @@ async fn fetch_contract_source(url: &str) -> Result<serde_json::Value, Box<dyn s
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load .env file
+    dotenv().ok();
+
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .format_target(false)
@@ -74,28 +86,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let args = Args::parse();
 
-    // Get API key from environment
-    let api_key = env::var("ETHERSCAN_API_KEY")
-        .expect("ETHERSCAN_API_KEY environment variable not set");
+    // Get chain configuration
+    let config = get_chain_config(&args.chain)
+        .expect("Unsupported chain");
 
-    // Check if supplied dir exists
+    // Get API key from environment
+    let api_key = env::var(config.api_key_env)
+        .unwrap_or_else(|_| panic!("{} environment variable not set", config.api_key_env));
+
+    // Rest of the implementation remains the same, starting from here:
     let path = PathBuf::from(&args.path);
     if path.exists() {
         error!("Path {} already exists", args.path);
         panic!("Path already exists");
     }
     
-    // Create the directory
     std::fs::create_dir(&path)?;
     info!("Created directory: {}", args.path);
 
-    // Parse the chain id
-    let chainid = match args.chain.parse::<i32>() {
-        Ok(id) => id,
-        Err(_) => chain_to_id(&args.chain).expect("Invalid chain id"),
-    };
-
-    info!("Chain id: {}", chainid);
+    info!("Chain id: {}", config.chain_id);
     info!("Cloning contract at address {} to path {}", args.address, args.path);
 
     // Initialize forge project
@@ -129,8 +138,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Fetch contract source
-    let url = build_url(chainid, &args.address, &api_key);
-    info!("Fetching contract from Etherscan...");
+    let url = build_url(&config, &args.address, &api_key);
+    info!("Fetching contract from API...");
     
     let json = fetch_contract_source(&url).await?;
     
@@ -141,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("No source code in response")?;
 
     if source_code.is_empty() {
-        error!("Contract source code is empty. The contract might not be verified on Etherscan.");
+        error!("Contract source code is empty. The contract might not be verified.");
         return Err("Contract source code is empty".into());
     }
 
@@ -175,7 +184,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (key, value) in sources {
         let mut file_path = src_path.clone();
         
-        // Create directories if needed
         let parts: Vec<&str> = key.split('/').collect();
         for dir in &parts[..parts.len()-1] {
             file_path.push(dir);

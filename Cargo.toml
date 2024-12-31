@@ -19,3 +19,4 @@ serde_json = "1.0.133"
 tokio = { version = "1.42.0", features = ["full"] }
 toml = "0.8.19"
 walkdir = "2.5.0"
+dotenv = "0.15"

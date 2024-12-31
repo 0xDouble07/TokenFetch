@@ -1,14 +1,22 @@
 # TokenFetch
 Pulls a smart contract using address and network and creates a new project using Foundry.
 
+This project was inspired by [\[ScPull\]](https://github.com/nuntax/ScPull/tree/main), but implements the functionality in a different way along with fixing a few bugs.
+
 ## Usage
 
-TokenFetch can be used in the following way(Will be updated soon):
+Set `.env` values:
 
-`export ETHERSCAN_API_KEY=XUZAWTIU5659GZBCYBTWAWSCTUCQMSAAVC`
-`cargo run -- <chain> <tokenAddress> ./file-name`
+`ETHERSCAN_API_KEY`
+`BASESCAN_API_KEY`
 
-Where chain is either an alias or a chainid and address is the address of the smart contract.
+TokenFetch can be used in the following way:
+
+1. `cargo build`
+
+2. `cargo run -- <chain> <token-address> ./example-file-name`
+
+Where chain is either an alias or a chainid and address is the address of the smart contract or token.
 
 ### Aliases
 TokenFetch currently only supports the following chains:
